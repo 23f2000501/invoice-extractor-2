@@ -61,20 +61,32 @@ def extract_invoice(req: InvoiceRequest):
 
     text = req.invoice_text
 
-    invoice_no = extract([
-        r"Invoice\s*(?:No|Number|#|ID)?\s*[:#-]?\s*([A-Za-z0-9\/_-]+)",
-        r"Reference\s*(?:No|Number)?\s*[:#-]?\s*([A-Za-z0-9\/_-]+)",
-        r"Ref(?:erence)?\s*[:#-]?\s*([A-Za-z0-9\/_-]+)",
-        r"Document\s*(?:No|Number)?\s*[:#-]?\s*([A-Za-z0-9\/_-]+)"
-    ], text)
+    invoice_no = None
 
-    date = parse_date(
-        extract([
-            r"Date\s*[:\-]\s*(.+)",
-            r"Invoice Date\s*[:\-]\s*(.+)",
-            r"Issue Date\s*[:\-]\s*(.+)"
-        ], text)
-    )
+    invoice_patterns = [
+        r"Invoice\s+Reference\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
+        r"Invoice\s+Ref\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
+        r"Invoice\s+Number\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
+        r"Invoice\s+No\.?\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
+        r"Invoice\s*#\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
+        r"Reference\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
+        r"Ref\.?\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
+        r"Document\s+(?:No|Number)\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)"
+    ]
+
+    for pattern in invoice_patterns:
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            invoice_no = m.group(1).strip()
+            break
+
+        date = parse_date(
+            extract([
+                r"Date\s*[:\-]\s*(.+)",
+                r"Invoice Date\s*[:\-]\s*(.+)",
+                r"Issue Date\s*[:\-]\s*(.+)"
+            ], text)
+        )
 
     vendor = extract([
         r"Vendor\s*[:\-]\s*(.+)",
