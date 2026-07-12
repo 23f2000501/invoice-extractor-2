@@ -22,7 +22,7 @@ class InvoiceRequest(BaseModel):
 
 def extract(patterns, text):
     for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
+        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
         if match:
             return match.group(1).strip()
     return None
@@ -44,13 +44,16 @@ def extract_number(patterns, text):
 
 
 def parse_date(date_string):
-    if date_string is None:
+    if not date_string:
         return None
 
     try:
-        return parser.parse(date_string).strftime("%Y-%m-%d")
+        return parser.parse(date_string, dayfirst=True).strftime("%Y-%m-%d")
     except:
-        return None
+        try:
+            return parser.parse(date_string).strftime("%Y-%m-%d")
+        except:
+            return None
 
 
 @app.post("/extract")
@@ -59,31 +62,47 @@ def extract_invoice(req: InvoiceRequest):
     text = req.invoice_text
 
     invoice_no = extract([
-        r"Invoice\s*(?:No|#)?\s*[:#]?\s*([A-Za-z0-9\-]+)"
+        r"Invoice\s*(?:No|Number|#|ID)?\s*[:#-]?\s*([A-Za-z0-9\/_-]+)",
+        r"Reference\s*(?:No|Number)?\s*[:#-]?\s*([A-Za-z0-9\/_-]+)",
+        r"Ref(?:erence)?\s*[:#-]?\s*([A-Za-z0-9\/_-]+)",
+        r"Document\s*(?:No|Number)?\s*[:#-]?\s*([A-Za-z0-9\/_-]+)"
     ], text)
 
     date = parse_date(
         extract([
-            r"Date\s*:\s*(.+)",
+            r"Date\s*[:\-]\s*(.+)",
+            r"Invoice Date\s*[:\-]\s*(.+)",
+            r"Issue Date\s*[:\-]\s*(.+)"
         ], text)
     )
 
     vendor = extract([
-        r"Vendor\s*:\s*(.+)",
-        r"Seller\s*:\s*(.+)"
+        r"Vendor\s*[:\-]\s*(.+)",
+        r"Seller\s*[:\-]\s*(.+)",
+        r"Supplier\s*[:\-]\s*(.+)",
+        r"From\s*[:\-]\s*(.+)",
+        r"Company\s*[:\-]\s*(.+)"
     ], text)
 
     amount = extract_number([
-        r"Subtotal.*?([0-9,]+\.\d{2})"
+        r"Subtotal\s*[:\-]?\s*.*?([0-9][0-9,]*\.\d{2})",
+        r"Sub\s*Total\s*[:\-]?\s*.*?([0-9][0-9,]*\.\d{2})",
+        r"Amount Before Tax\s*[:\-]?\s*.*?([0-9][0-9,]*\.\d{2})",
+        r"Net Amount\s*[:\-]?\s*.*?([0-9][0-9,]*\.\d{2})"
     ], text)
 
     tax = extract_number([
-        r"(?:GST|VAT).*?([0-9,]+\.\d{2})"
+        r"GST.*?([0-9][0-9,]*\.\d{2})",
+        r"VAT.*?([0-9][0-9,]*\.\d{2})",
+        r"Tax.*?([0-9][0-9,]*\.\d{2})",
+        r"CGST.*?([0-9][0-9,]*\.\d{2})",
+        r"SGST.*?([0-9][0-9,]*\.\d{2})",
+        r"IGST.*?([0-9][0-9,]*\.\d{2})"
     ], text)
 
     currency = extract([
-        r"Currency\s*:\s*([A-Z]{3})",
-        r"\b(INR|USD|EUR|GBP)\b"
+        r"Currency\s*[:\-]\s*([A-Z]{3})",
+        r"\b(INR|USD|EUR|GBP|AED|AUD|CAD|JPY|CNY|SGD)\b"
     ], text)
 
     return {
