@@ -1,9 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
+from google import genai
+from dotenv import load_dotenv
+import os
+import json
 import re
-from dateutil import parser
+
+load_dotenv()
+
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 app = FastAPI()
 
@@ -20,111 +26,63 @@ class InvoiceRequest(BaseModel):
     invoice_text: str
 
 
-def extract(patterns, text):
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
-        if match:
-            return match.group(1).strip()
-    return None
+PROMPT = """
+You are an invoice extraction engine.
 
+Extract the invoice into EXACTLY this JSON.
 
-def extract_number(patterns, text):
-    value = extract(patterns, text)
+{
+  "invoice_no": null,
+  "date": null,
+  "vendor": null,
+  "amount": null,
+  "tax": null,
+  "currency": null
+}
 
-    if value is None:
-        return None
+Rules:
 
-    value = value.replace(",", "")
-    value = re.sub(r"[^\d.]", "", value)
-
-    try:
-        return float(value)
-    except:
-        return None
-
-
-def parse_date(date_string):
-    if not date_string:
-        return None
-
-    try:
-        return parser.parse(date_string, dayfirst=True).strftime("%Y-%m-%d")
-    except:
-        try:
-            return parser.parse(date_string).strftime("%Y-%m-%d")
-        except:
-            return None
+- Return ONLY JSON.
+- No markdown.
+- No explanation.
+- invoice_no should contain only the invoice/reference number.
+- date must be YYYY-MM-DD.
+- amount is subtotal before tax.
+- tax is only the tax amount.
+- currency should be ISO code like INR, USD, EUR.
+- If unavailable return null.
+"""
 
 
 @app.post("/extract")
-def extract_invoice(req: InvoiceRequest):
+def extract(req: InvoiceRequest):
 
-    text = req.invoice_text
+    response = client.models.generate_content(
+        model="models/gemini-flash-latest",
+        contents=PROMPT + "\n\nInvoice:\n\n" + req.invoice_text,
+    )
 
-    invoice_no = None
+    text = response.text.strip()
 
-    invoice_patterns = [
-        r"Invoice\s+Reference\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
-        r"Invoice\s+Ref\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
-        r"Invoice\s+Number\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
-        r"Invoice\s+No\.?\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
-        r"Invoice\s*#\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
-        r"Reference\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
-        r"Ref\.?\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)",
-        r"Document\s+(?:No|Number)\s*[:#-]?\s*([A-Za-z0-9\-_\/]+)"
-    ]
+    text = re.sub(r"```json", "", text)
+    text = re.sub(r"```", "", text)
 
-    for pattern in invoice_patterns:
-        m = re.search(pattern, text, re.IGNORECASE)
-        if m:
-            invoice_no = m.group(1).strip()
-            break
+    start = text.find("{")
+    end = text.rfind("}")
 
-        date = parse_date(
-            extract([
-                r"Date\s*[:\-]\s*(.+)",
-                r"Invoice Date\s*[:\-]\s*(.+)",
-                r"Issue Date\s*[:\-]\s*(.+)"
-            ], text)
-        )
+    if start == -1 or end == -1:
+        return {
+            "invoice_no": None,
+            "date": None,
+            "vendor": None,
+            "amount": None,
+            "tax": None,
+            "currency": None,
+        }
 
-    vendor = extract([
-        r"Vendor\s*[:\-]\s*(.+)",
-        r"Seller\s*[:\-]\s*(.+)",
-        r"Supplier\s*[:\-]\s*(.+)",
-        r"From\s*[:\-]\s*(.+)",
-        r"Company\s*[:\-]\s*(.+)"
-    ], text)
+    return json.loads(text[start:end + 1])
 
-    amount = extract_number([
-        r"Subtotal\s*[:\-]?\s*.*?([0-9][0-9,]*\.?\d*)",
-        r"Sub\s*Total\s*[:\-]?\s*.*?([0-9][0-9,]*\.?\d*)",
-        r"Amount\s+Before\s+Tax\s*[:\-]?\s*.*?([0-9][0-9,]*\.?\d*)",
-        r"Pre[- ]?Tax\s+Total\s*[:\-]?\s*.*?([0-9][0-9,]*\.?\d*)",
-        r"Net\s+Amount\s*[:\-]?\s*.*?([0-9][0-9,]*\.?\d*)",
-        r"Taxable\s+Amount\s*[:\-]?\s*.*?([0-9][0-9,]*\.?\d*)",
-        r"Amount\s*[:\-]?\s*.*?([0-9][0-9,]*\.?\d*)"
-        ], text)
 
-    tax = extract_number([
-        r"GST.*?([0-9][0-9,]*\.?\d*)",
-        r"VAT.*?([0-9][0-9,]*\.?\d*)",
-        r"Tax.*?([0-9][0-9,]*\.?\d*)",
-        r"CGST.*?([0-9][0-9,]*\.?\d*)",
-        r"SGST.*?([0-9][0-9,]*\.?\d*)",
-        r"IGST.*?([0-9][0-9,]*\.?\d*)"
-    ], text)
-
-    currency = extract([
-        r"Currency\s*[:\-]\s*([A-Z]{3})",
-        r"\b(INR|USD|EUR|GBP|AED|AUD|CAD|JPY|CNY|SGD)\b"
-    ], text)
-
-    return {
-        "invoice_no": invoice_no,
-        "date": date,
-        "vendor": vendor,
-        "amount": amount,
-        "tax": tax,
-        "currency": currency
-    }
+@app.get("/")
+def home():
+    return {"status": "running"}

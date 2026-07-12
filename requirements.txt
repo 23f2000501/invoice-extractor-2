@@ -1,3 +1,7 @@
 fastapi
 uvicorn
 python-dateutil
+requests
+google-generativeai
+python-dotenv
+google-genai
